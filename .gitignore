@@ -1,6 +1,6 @@
 # Logs - @TODO:Commenting logs out till I move it to another directory
 # logs
-*.log
+# *.log
 npm-debug.log*
 
 # Runtime data
