@@ -1,0 +1,30 @@
+{
+  "name": "Lucy",
+  "version": "1.0.0",
+  "description": "The Zoobe Slackbot",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Eslamunto/Lucy.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Eslamunto/Lucy/issues"
+  },
+  "homepage": "https://github.com/Eslamunto/Lucy",
+  "dependencies": {
+    "calendar": "^0.1.0",
+    "fs": "0.0.2",
+    "http": "0.0.0",
+    "json": "^9.0.3",
+    "node-schedule": "^0.6.0",
+    "request": "^2.67.0",
+    "slackbots": "^0.5.0",
+    "sqlite3": "^3.1.1",
+    "winston": "^2.1.1"
+  }
+}
