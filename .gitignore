@@ -1,5 +1,5 @@
-# Logs
-logs
+# Logs - @TODO:Commenting logs out till I move it to another directory
+# logs
 *.log
 npm-debug.log*
 
