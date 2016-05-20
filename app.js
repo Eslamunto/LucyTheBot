@@ -14,7 +14,12 @@ var winston = require('winston');
 var request = require('request');
 var json = require('json');
 var http = require('http');
+var https = require('https');
+var ffmpeg = require('fluent-ffmpeg');
+// var video_config = require("./config.js");
+
 var work_dir = '/home/zoobe/lucy/';
+
 
 winston.add(
     winston.transports.File, {
@@ -192,6 +197,7 @@ lucy._setupDb = function (db) {
         db.run('CREATE TABLE IF NOT EXISTS info (name TEXT PRIMARY KEY, val TEXT DEFAULT NULL)');
         db.run('CREATE TABLE IF NOT EXISTS saladrecord(id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, username TEXT NOT NULL, date TEXT NOT NULL, interested INTEGER DEFAULT NULL, paid INTEGER DEFAULT NULL)');
         db.run('CREATE TABLE IF NOT EXISTS talktolucy(id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, username TEXT NOT NULL, date TEXT NOT NULL, text TEXT)');
+        db.run('CREATE TABLE IF NOT EXISTS user(id TEXT PRIMARY KEY  NOT NULL, token TEXT NOT NULL)');
         console.log("table created");
     })
 };
@@ -445,7 +451,12 @@ lucy._inOrOutForSmoothie = function (message, currentDay) {
         this._handleHowAreYouMsg(user);
     }
 
+    else if(message.type == "message" && text.indexOf("token=") > -1 && text.indexOf("YOURTOKEN") <= -1){
+        this._handleSaveUserToken(user, text);
+    }
+
     else if (text.indexOf('fine') > -1 || text.indexOf('good') > -1 || text.indexOf('ok') > -1) {
+      console.log("MYTEXT " + text);
         this._handleGoodMsg(user);
     }
 
@@ -459,6 +470,17 @@ lucy._inOrOutForSmoothie = function (message, currentDay) {
         }, function(res) {
             lucy.postMessageToUser(user.name, "Opening it for you! ;-)", {as_user: true});
         })
+    }
+
+    else if(message.type == "message" && text.indexOf("how") > -1 && text.indexOf("compress") > -1){
+
+        this._handleHowToCompress(user);
+
+    }
+
+
+    else if(message.type == "message" && message.subtype == "file_share" && message.file != null && message.file.filetype == "mp4" && text.indexOf("compress") > -1 ){
+        this._handleCompressVideo(user, message);
     }
 
     else {
@@ -512,7 +534,134 @@ lucy._handleHiMsg = function (user) {
     //console.log(user);
     lucy.postMessageToUser(user.name, "Hi " + user.name + ", How's everything?", {as_user: true});
 };
+/**
+ * helper method to handle the how to compress message
+ * @param user : user to send the steps of how to compress to.
+ * @private
+ */
+lucy._handleHowToCompress = function(user){
+    lucy.postMessageToUser(user.name, "Go to the link  : https://api.slack.com/docs/oauth-test-tokens \n If you have token copy it and send it to me \n If not generate a token and send it to me \n You should send it in the format token=YOURTOKEN \n Then upload the video and call me in the comment to compress it for you by typing compress lucy in the comment part", {as_user: true});
+}
+/**
+ * helper method to handle saving user tokens
+ * @param user
+ * @param text : the string including the token in formar token=XXX
+ * @private
+ */
+lucy._handleSaveUserToken = function(user, text){
+  var token = text.split("=");
+  token = token[token.length - 1];
+  lucy.db.get('SELECT token FROM user WHERE id = '  + '\'' + user.id + '\' LIMIT 1', function (err, record) {
+      if (err) {
+          winston.log('error', 'database error' + err);
+          return console.error('DATABASE ERROR:', err);
+      }
+      // this is the first recored for this user
+      if (!record) {
+          winston.log('info', 'Not a record');
+          lucy.db.run('INSERT INTO user(id, token) VALUES(?, ?)', user.id, token);
+      }else{
+          // updates user last token
+          lucy.db.run('UPDATE user SET token = ? WHERE id = ?' , token, user.id);
+      }
+      lucy.postMessageToUser(user.name, "I have saved your token do not worry I will not share it with anyone", {as_user: true});
 
+  });
+}
+/**
+ * helper method to handle compressing video.
+ * @param user
+ * @param data : the slack message response.
+ * @private
+ */
+lucy._handleCompressVideo = function(user, data){
+  lucy.db.get('SELECT token FROM user WHERE id = '  + '\'' + user.id + '\' LIMIT 1', function (err, record) {
+      if (err) {
+          winston.log('error', 'database error' + err);
+          return console.error('DATABASE ERROR:', err);
+      }
+      // The record not found.
+      if (!record) {
+          winston.log('info', 'Not a record');
+          lucy.postMessageToUser(user, "Please follow the following steps to add your token first : ", {as_user: true});
+          lucy._handleHowToCompress(user);
+      }else{
+          lucy._sendCompressRequest(user, record.token, data);
+      }
+
+  });
+}
+/**
+ * helper method to handle compressing video.
+ * @param user
+ * @param token : the user slack auth token.
+ * @param data : the slack message response.
+ * @private
+ */
+lucy._sendCompressRequest = function(user, token, data){
+  var url = "https://slack.com/api/files.sharedPublicURL?token=" + token + "&file=" + data.file.id;
+  var request = https.get(url, function(res) {
+    console.log('STATUS: ' + res.statusCode);
+    console.log('HEADERS: ' + JSON.stringify(res.headers));
+    res.setEncoding('utf8');
+    res.on('data', function (chunk) {
+      fi(JSON.parse(chunk).ok){
+        var s = data.file.permalink_public.split("-");
+        s = s[s.length - 1];
+        var downloadURL = data.file.url_private+ "?pub_secret=" + s;
+        lucy._compressVideoFFMPEG(downloadURL, data, token, user);
+        //lucy.postMessageToUser(user.name, downloadURL, {as_user: true});
+        // compressOnlineVideo(data.file.id, downloadURL, data, token, user);
+      }else{
+        //  The token has been expired.
+        lucy.postMessageToUser(user.name, JSON.parse(chunk).error, {as_user: true});
+        lucy.postMessageToUser(user.name, "Please follow the following steps to add your token first : ", {as_user: true});
+        lucy._handleHowToCompress(user);
+      }
+    });
+  });
+}
+
+/**
+ * helper method to running ffmpeg command.
+ * @param path : The path to the video.
+ * @param data : the slack message response.
+ * @param token : the user slack auth token.
+ * @param user
+ * @private
+ */
+lucy._compressVideoFFMPEG = function(path, data, token, user){
+  var videoId = data.file.id;
+  lucy.postMessageToUser(user.name, "Fetching the video", {as_user: true});
+  var proc = new ffmpeg(path)
+      .addOption('-c:v',  'libx264', '-profile:v', 'baseline', '-level', '3.0', '-b:v', '800k')
+      .addOption('-g', 10, '-qmin', 10, '-qmax', 51, '-i_qfactor', 0.71, '-qcomp', 0.6, '-me_method', 'hex')
+      .addOption('-subq', 5, '-r', 20/1 ,'-pix_fmt', 'yuv420p')
+      .addOption('-c:a', 'libfdk_aac', '-ac', 2 ,'-ar', 44100)
+      .on('progress', function(progress) {
+         lucy.postMessageToUser(user.name, "Do not worry still working for you on "+  videoId  + ".mp4 " +": " + 'Processing: ' + progress.frames + ' frames  done', {as_user: true});
+      })
+      .on('start', function(commandLine) {
+        console.log("%s: Spawned FFmpeg with command: %s", commandLine);
+      })
+      .on('error', function(err, stdout, stderr) {
+        console.log('Cannot process video: ' + err.message);
+        lucy.postMessageToUser(user.name, 'Cannot process video: ' + err.message, {as_user: true});
+      })
+      .on('end', function() {
+        // Delete the file after compressing it to save space on slack.
+        var url = "https://slack.com/api/files.delete?token=" + token + "&file=" + data.file.id;
+        var request = https.get(url, function(res) {
+          console.log('STATUS: ' + res.statusCode);
+          console.log('HEADERS: ' + JSON.stringify(res.headers));
+          res.setEncoding('utf8');
+          res.on('data', function (chunk) {
+            lucy.postMessageToUser(user.name, "Here is the link : " + video_config.path_url + videoId + ".mp4" + " , and I have deleted the original file to save space on Slack.", {as_user: true});
+          });
+        });
+     })
+     .save(video_config.video_path + videoId +  ".mp4");
+}
 /**
  * Sends channel remined msg for ready Salad
  * @private
